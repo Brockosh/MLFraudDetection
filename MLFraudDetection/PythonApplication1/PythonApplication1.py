@@ -1,21 +1,25 @@
 import pandas as pd
+import json
+import random  # Import the random module
+from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import StandardScaler, OneHotEncoder
 from sklearn.compose import ColumnTransformer
-from sklearn.pipeline import Pipeline
-from sklearn.model_selection import train_test_split
-import numpy as np
-import json
+from imblearn.over_sampling import SMOTE
+from imblearn.pipeline import make_pipeline 
 import tensorflow as tf
 from tensorflow.keras.models import Sequential
-from tensorflow.keras.layers import Dense
-from tensorflow.keras.optimizers import Adam
-from tensorflow.keras.layers import Dropout
-from sklearn.model_selection import train_test_split
+from tensorflow.keras.layers import Dense, Dropout
 from scipy.sparse import csr_matrix
 
 # Read the JSON data
 with open('new_transactions_training.json') as f:
     data = json.load(f)
+
+# Shuffle the JSON data to randomize the order of transactions
+random.shuffle(data)  # Shuffle the data in-place
+
+# Print a snippet of the JSON data to inspect its structure
+print("JSON data sample after shuffling:", json.dumps(data[:2], indent=4))
 
 # Initialize lists to store values for each column
 types = []
@@ -50,12 +54,10 @@ df = pd.DataFrame({
     'suspicious': suspiciousFlags
 })
 
-# Extract features and labels
-X = df.drop('suspicious', axis=1)  # Features
-y = df['suspicious']  # Labels
+# Print the first few rows of the DataFrame to check the data
+print("DataFrame head after shuffling:", df.head(), "\n")
 
-# Preprocess the features
-# Encode categorical variables and scale numerical features
+# Define categorical and numerical features
 categorical_features = ['type', 'transactionLocation', 'device', 'paymentMethod']
 numerical_features = ['amount', 'transactionTime', 'recentChangeInAccountDetails']
 
@@ -63,35 +65,48 @@ numerical_features = ['amount', 'transactionTime', 'recentChangeInAccountDetails
 categorical_transformer = OneHotEncoder(handle_unknown='ignore')
 numerical_transformer = StandardScaler()
 
-# Combine transformers into a ColumnTransformer
 preprocessor = ColumnTransformer(
     transformers=[
         ('num', numerical_transformer, numerical_features),
         ('cat', categorical_transformer, categorical_features)
     ])
 
-# Apply transformations
-X_processed = preprocessor.fit_transform(X)
+# Pipeline with preprocessing and SMOTE for balancing the dataset
+#pipeline = make_pipeline(preprocessor, SMOTE(random_state=42))
+pipeline = make_pipeline(preprocessor)
 
-# Convert sparse matrices to dense arrays
+# Apply transformations and balance the dataset
+#X_processed, y_processed = pipeline.fit_resample(df.drop('suspicious', axis=1), df['suspicious'])
+# Apply preprocessing transformations
+X_processed = pipeline.fit_transform(df.drop('suspicious', axis=1))
+
+# Since we're not resampling, y remains unchanged and can be directly assigned
+y_processed = df['suspicious']
+
+
+
+# Convert sparse matrices to dense arrays if necessary
 if isinstance(X_processed, csr_matrix):
     X_processed = X_processed.toarray()
 
 # Split the data into training and testing sets
-X_train, X_test, y_train, y_test = train_test_split(X_processed, y, test_size=0.2, random_state=42)
+X_train, X_test, y_train, y_test = train_test_split(X_processed, y_processed, test_size=0.2, random_state=42)
 
-# Define the neural network architecture
+sampled_transactions = df.sample(n=20, random_state=42)['suspicious']
+print("Randomly sampled transactions' suspicious status:\n", sampled_transactions)
+
+# Define and compile the neural network model
 model = Sequential([
     Dense(64, activation='relu', input_shape=(X_train.shape[1],)),
+    Dropout(0.5),
     Dense(32, activation='relu'),
+    Dropout(0.5),
     Dense(1, activation='sigmoid')
 ])
-
-# Compile the model
 model.compile(optimizer='adam', loss='binary_crossentropy', metrics=['accuracy'])
 
 # Train the model
-model.fit(X_train, y_train, epochs=20, batch_size=32, validation_data=(X_test, y_test))
+model.fit(X_train, y_train, epochs=1000, batch_size=32, validation_split=0.2)
 
 # Evaluate the model
 test_loss, test_acc = model.evaluate(X_test, y_test)
